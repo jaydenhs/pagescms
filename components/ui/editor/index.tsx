@@ -690,12 +690,18 @@ export function Editor({
 
       const preloaded = await preloadImageSource(resolved.src);
       if (!preloaded) {
-        finalizeImageUpload(uploadId, (attrs) => ({
-          ...attrs,
-          uploading: false,
-          uploadError: "Image uploaded, but preview failed to load",
-        }));
-        cleanupUpload(uploadId, { revokeBlob: false });
+        // The file is already committed; swap the blob placeholder for the real path so the blob URL never reaches the saved content.
+        finalizeImageUpload(uploadId, (attrs) => {
+          const expectedBlob = expectedBlobByUploadIdRef.current.get(uploadId);
+          const currentSrc = typeof attrs.src === "string" ? attrs.src : "";
+          return {
+            ...attrs,
+            src: expectedBlob && currentSrc === expectedBlob ? resolved.src : attrs.src,
+            uploading: false,
+            uploadError: "Image uploaded, but preview failed to load",
+          };
+        });
+        cleanupUpload(uploadId, { revokeBlob: true });
         return;
       }
 
