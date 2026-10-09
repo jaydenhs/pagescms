@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useConfig } from "@/contexts/config-context";
 import { RepoActionButtons } from "@/components/repo/repo-action-buttons";
 import {
+  compareMediaItems,
   extensionCategories,
   getFileSize,
   getParentPath,
@@ -279,10 +280,7 @@ const MediaView = ({
   }, [data, filteredExtensionsSet]);
 
   const sortMediaItems = useCallback((items: MediaItem[]) => {
-    return [...items].sort((a, b) => {
-      if (a.type === b.type) return a.name.localeCompare(b.name);
-      return a.type === "dir" ? -1 : 1;
-    });
+    return [...items].sort(compareMediaItems);
   }, []);
   
   const buildMediaApiUrl = useCallback((targetPath: string): string => (

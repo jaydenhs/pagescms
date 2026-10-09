@@ -1,5 +1,5 @@
 import { getRepoReadContext } from "@/lib/api-repo-context";
-import { getFileExtension, normalizePath } from "@/lib/utils/file";
+import { compareMediaItems, getFileExtension, normalizePath } from "@/lib/utils/file";
 import { getMediaCache } from "@/lib/github-cache-file";
 import { createHttpError, toErrorResponse } from "@/lib/api-error";
 
@@ -56,13 +56,7 @@ export async function GET(
       });
     }
 
-    results.sort((a: any, b: any) => {
-      if (a.type === b.type) {
-        return a.name.localeCompare(b.name);
-      } else {
-        return a.type === "dir" ? -1 : 1;
-      }
-    });
+    results.sort(compareMediaItems);
 
     return Response.json({
       status: "success",

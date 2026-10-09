@@ -153,6 +153,21 @@ const getUploadFileName = (
   return getSafeUploadName(filename);
 };
 
+// CMS uploads named with rename: random start with a base36 Date.now(), e.g. "mv10ggaq-30s37scg.jpeg"; 0 for any other name
+const getUploadTimestamp = (name: string): number => {
+  const match = name.match(/^([0-9a-z]{7,9})-[0-9a-z]{8}\.[^.]+$/i);
+  if (!match) return 0;
+  const time = parseInt(match[1], 36);
+  return time > 1.5e12 && time < 4.1e12 ? time : 0;
+};
+
+// Media lists: folders first, then files by most recent upload; other files follow, sorted by name
+const compareMediaItems = (a: { type: string; name: string }, b: { type: string; name: string }): number => {
+  if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+  if (a.type === "dir") return a.name.localeCompare(b.name);
+  return getUploadTimestamp(b.name) - getUploadTimestamp(a.name) || a.name.localeCompare(b.name);
+};
+
 const sortFiles = (data: Record<string, any>[]): Record<string, any>[] => {
   return data.sort((a, b) => {
     if (a.type === b.type) {
@@ -176,6 +191,7 @@ export {
   getSafeUploadName,
   getUploadFileName,
   sortFiles,
+  compareMediaItems,
   extensionCategories,
   serializedTypes
 };
