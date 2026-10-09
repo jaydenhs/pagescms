@@ -8,6 +8,7 @@ import { getSchemaByName } from "@/lib/schema";
 import { cn } from "@/lib/utils";
 import { requireApiSuccess } from "@/lib/api-client";
 import { prepareImageUpload } from "@/lib/utils/image-upload";
+import { describeUploadError } from "@/lib/utils/upload-error";
 import type { FileSaveData } from "@/types/api";
 
 interface MediaUploadContextValue {
@@ -119,7 +120,10 @@ function MediaUploadRoot({ children, path, onUpload, media, extensions, multiple
             }
             return `Uploaded ${file.name}`;
           },
-          error: (error: unknown) => error instanceof Error ? error.message : "Upload failed",
+          error: (error: unknown) => {
+            const { title, description } = describeUploadError(error, file);
+            return { message: title, description, duration: 12000 };
+          },
         });
       }
     } catch (error) {

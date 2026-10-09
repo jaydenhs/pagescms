@@ -66,6 +66,13 @@ export function FileOptions({
     return getParentPath(path);
   }, [type, name, config.object, path]);
   const relativePath = useMemo(() => getRelativePath(normalizedPath, rootPath), [normalizedPath, rootPath]);
+  // src/content/countries/<country>/<city>.md -> <live site>/<country>/#<city>
+  const liveSiteUrl = useMemo(() => {
+    const base = process.env.NEXT_PUBLIC_LIVE_SITE_URL?.replace(/\/+$/, "");
+    const match = normalizedPath.match(/(?:^|\/)countries\/([^/]+)\/([^/]+)\.md$/);
+    if (type !== "collection" || !base || !match) return null;
+    return `${base}/${match[1]}/#${match[2]}`;
+  }, [type, normalizedPath]);
   const showRename = type !== "settings" && type !== "file" && canRename !== false;
   const showDelete = type !== "settings" && canDelete !== false;
 
@@ -121,6 +128,14 @@ export function FileOptions({
                 <ArrowUpRight className="size-3 text-muted-foreground ml-auto" />
               </a>
             </DropdownMenuItem>
+            {liveSiteUrl && (
+              <DropdownMenuItem asChild>
+                <a href={liveSiteUrl} target="_blank" rel="noopener noreferrer">
+                  View on Live Site
+                  <ArrowUpRight className="size-3 text-muted-foreground ml-auto" />
+                </a>
+              </DropdownMenuItem>
+            )}
             {(showRename || showDelete)
               ? <>
                   <DropdownMenuSeparator />

@@ -32,7 +32,9 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { describeUploadError } from "@/lib/utils/upload-error";
 import SlashCommands from "./slash-command/commands";
 import type {
   ImagePickerContext,
@@ -685,6 +687,15 @@ export function Editor({
           uploadError: "Upload failed",
         }));
         cleanupUpload(uploadId, { revokeBlob: false });
+        const { title, description } = describeUploadError(
+          new Error(
+            onUploadImage
+              ? "The upload returned no image path."
+              : `Image is larger than the ${Math.round(maxImageBytes / 1024)} KB inline limit.`,
+          ),
+          file,
+        );
+        toast.error(title, { description, duration: 12000 });
         return;
       }
 
@@ -702,6 +713,10 @@ export function Editor({
           };
         });
         cleanupUpload(uploadId, { revokeBlob: true });
+        toast.warning(`${file.name} was saved, but its preview didn't load`, {
+          description: "The photo is committed to the repo. Reload the page to see it in the editor.",
+          duration: 8000,
+        });
         return;
       }
 
@@ -729,6 +744,9 @@ export function Editor({
         uploadError: error instanceof Error ? error.message : "Upload failed",
       }));
       cleanupUpload(uploadId, { revokeBlob: false });
+      console.error(error);
+      const { title, description } = describeUploadError(error, file);
+      toast.error(title, { description, duration: 12000 });
     }
   };
 
