@@ -644,7 +644,8 @@ export function Editor({
     file: File,
     source: "paste" | "drop" | "slash",
     initialAttrs?: { alt?: string; title?: string },
-  ): Promise<void> => {
+    at?: number,
+  ): Promise<number | undefined> => {
     if (!file.type.startsWith("image/")) return;
     const uploadId = createUploadId();
     const blobUrl = URL.createObjectURL(file);
@@ -654,10 +655,9 @@ export function Editor({
     expectedBlobByUploadIdRef.current.set(uploadId, blobUrl);
     updatePendingUploads(1);
 
-    editor
-      .chain()
-      .focus()
-      .insertContent({
+    // Inserting a block image leaves it selected, so the next insert at the selection would replace it.
+    // Batch pastes pass `at` (the end of the previous image) to insert after it instead.
+    const imageNode = {
         type: "image",
         attrs: {
           src: blobUrl,
@@ -667,8 +667,10 @@ export function Editor({
           uploading: true,
           uploadError: null,
         },
-      })
-      .run();
+    };
+    const insertChain = editor.chain().focus();
+    (at == null ? insertChain.insertContent(imageNode) : insertChain.insertContentAt(at, imageNode)).run();
+    const endPos = editor.state.selection.to;
 
     try {
       let resolved: ImageUploadResult | null = null;
@@ -696,7 +698,7 @@ export function Editor({
           file,
         );
         toast.error(title, { description, duration: 12000 });
-        return;
+        return endPos;
       }
 
       const preloaded = await preloadImageSource(resolved.src);
@@ -717,7 +719,7 @@ export function Editor({
           description: "The photo is committed to the repo. Reload the page to see it in the editor.",
           duration: 8000,
         });
-        return;
+        return endPos;
       }
 
       finalizeImageUpload(uploadId, (attrs): UploadableImageAttrs | null => {
@@ -737,6 +739,7 @@ export function Editor({
       });
 
       cleanupUpload(uploadId, { revokeBlob: true });
+      return endPos;
     } catch (error) {
       finalizeImageUpload(uploadId, (attrs) => ({
         ...attrs,
@@ -747,12 +750,14 @@ export function Editor({
       console.error(error);
       const { title, description } = describeUploadError(error, file);
       toast.error(title, { description, duration: 12000 });
+      return endPos;
     }
   };
 
   const insertImagesFromFiles = async (files: File[], source: "paste" | "drop"): Promise<void> => {
+    let at: number | undefined;
     for (const file of files) {
-      await insertLocalImageFile(file, source);
+      at = await insertLocalImageFile(file, source, undefined, at);
     }
   };
 
