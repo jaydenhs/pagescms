@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
+import { getLiveSiteUrl } from "@/lib/utils/deploy-watch";
 import { ArrowUpRight } from "lucide-react";
 import { FileRename } from "@/components/file/file-rename";
 
@@ -67,12 +68,10 @@ export function FileOptions({
   }, [type, name, config.object, path]);
   const relativePath = useMemo(() => getRelativePath(normalizedPath, rootPath), [normalizedPath, rootPath]);
   // src/content/countries/<country>/<city>.md -> <live site>/<country>/#<city>
-  const liveSiteUrl = useMemo(() => {
-    const base = process.env.NEXT_PUBLIC_LIVE_SITE_URL?.replace(/\/+$/, "");
-    const match = normalizedPath.match(/(?:^|\/)countries\/([^/]+)\/([^/]+)\.md$/);
-    if (type !== "collection" || !base || !match) return null;
-    return `${base}/${match[1]}/#${match[2]}`;
-  }, [type, normalizedPath]);
+  const liveSiteUrl = useMemo(
+    () => (type === "collection" ? getLiveSiteUrl(normalizedPath) : null),
+    [type, normalizedPath],
+  );
   const showRename = type !== "settings" && type !== "file" && canRename !== false;
   const showDelete = type !== "settings" && canDelete !== false;
 

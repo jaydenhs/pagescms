@@ -42,6 +42,7 @@ export type FileSaveData = {
   extension?: string;
   size?: number;
   url?: string;
+  commitSha?: string;
   config?: unknown;
 };
 

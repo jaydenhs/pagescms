@@ -280,6 +280,7 @@ export async function POST(
         extension: getFileExtension(response?.data.content?.name || ""),
         size: response?.data.content?.size,
         url: response?.data.content?.download_url,
+        commitSha: response?.data.commit?.sha,
         config: newConfig ?? undefined,
       }
     });

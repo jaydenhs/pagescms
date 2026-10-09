@@ -63,6 +63,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "sonner";
+import { getLiveSiteUrl, watchDeploy } from "@/lib/utils/deploy-watch";
 import { EllipsisVertical, History, Lock, LockOpen, Save } from "lucide-react";
 import useSWR, { useSWRConfig } from "swr";
 
@@ -402,6 +403,18 @@ export function Entry({
       loading: "Saving your file",
       success: (response: ApiSuccess<EntryData>) => {
         if (onSave) onSave(response.data);
+        const saved = response.data as unknown as { commitSha?: string; path?: string };
+        const liveUrl = saved.commitSha && schemaType === "collection" ? getLiveSiteUrl(saved.path ?? path ?? "") : null;
+        if (saved.commitSha && liveUrl) {
+          watchDeploy({
+            owner: config.owner,
+            repo: config.repo,
+            branch: config.branch,
+            sha: saved.commitSha,
+            liveUrl,
+            label: getFileName(normalizePath(saved.path ?? path ?? "")).replace(/\.md$/, ""),
+          });
+        }
         return response.message;
       },
       error: (error: unknown) => error instanceof Error ? error.message : "Failed to save file.",
