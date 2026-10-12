@@ -101,6 +101,11 @@ export const auth = betterAuth({
       },
     },
   },
+  session: {
+    // stay signed in for a year; each visit (at most once a day) pushes the expiry out again
+    expiresIn: 60 * 60 * 24 * 365,
+    updateAge: 60 * 60 * 24,
+  },
   database: drizzleAdapter(db, {
     provider: "pg",
     schema: {
