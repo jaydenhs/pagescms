@@ -1,5 +1,6 @@
 import { type NextRequest } from "next/server";
 import { createOctokitInstance } from "@/lib/utils/octokit";
+import { applyPatch, structuredPatch } from "diff";
 import { isContentOperationAllowed } from "@/lib/operations";
 import { writeFns } from "@/fields/registry";
 import { configVersion, parseConfig, normalizeConfig } from "@/lib/config";
@@ -209,6 +210,33 @@ export async function POST(
         }
       : undefined;
     
+    // If the file changed on GitHub since this editor loaded it (a bot commit, another save), fold those changes in
+    // instead of overwriting them: apply this save's edits (base -> mine) onto the current file.
+    let saveSha = data.sha;
+    if (data.type === "content" && data.sha && typeof contentBase64 === "string") {
+      try {
+        const octokit = createOctokitInstance(token);
+        const current = await octokit.rest.repos.getContent({
+          owner: params.owner,
+          repo: params.repo,
+          path: normalizedPath,
+          ref: params.branch,
+        });
+        if (!Array.isArray(current.data) && current.data.type === "file" && current.data.sha !== data.sha) {
+          const base = await octokit.rest.git.getBlob({ owner: params.owner, repo: params.repo, file_sha: data.sha });
+          const decode = (b64: string) => Buffer.from(b64, "base64").toString("utf-8");
+          const patch = structuredPatch("file", "file", decode(base.data.content), decode(contentBase64), "", "", { context: 1 });
+          const merged = applyPatch(decode(current.data.content), patch);
+          if (typeof merged === "string") {
+            contentBase64 = Buffer.from(merged).toString("base64");
+            saveSha = current.data.sha;
+          }
+        }
+      } catch (error) {
+        console.warn("[save] merge with upstream changes skipped", error);
+      }
+    }
+
     const response = await githubSaveFile(
       token,
       params.owner,
@@ -216,7 +244,7 @@ export async function POST(
       params.branch,
       normalizedPath,
       contentBase64,
-      data.sha,
+      saveSha,
       {
         configObject: config?.object,
         templatesOverride: schemaCommitTemplates,

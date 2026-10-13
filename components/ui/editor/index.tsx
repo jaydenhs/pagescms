@@ -13,7 +13,7 @@ import TableHeader from "@tiptap/extension-table-header";
 import TableCell from "@tiptap/extension-table-cell";
 import { Markdown } from "@tiptap/markdown";
 import { DOMSerializer, type Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { TextSelection } from "@tiptap/pm/state";
+import { Selection, TextSelection } from "@tiptap/pm/state";
 import {
   Bold,
   Columns3,
@@ -63,6 +63,49 @@ export type ImageUploadHandler = (
 
 const DEFAULT_MAX_IMAGE_BYTES = 1_000_000;
 const UPLOADED_IMAGE_PRELOAD_TIMEOUT_MS = 8_000;
+const UPLOAD_CONCURRENCY = 3;
+const UPLOAD_RETRY_DELAYS_MS = [1500, 4000, 9000];
+
+const isRetryableUploadError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /failed to fetch|network|load failed|timed? ?out|timeout|aborted|conflict|fast.?forward|\b(409|429|500|502|503|504)\b/i.test(message);
+};
+
+// Mobile browsers pause or drop requests while the tab is in the background; hold the next attempt until it is visible again.
+const waitUntilVisible = (): Promise<void> =>
+  new Promise((resolve) => {
+    if (typeof document === "undefined" || document.visibilityState === "visible") return resolve();
+    const onChange = () => {
+      if (document.visibilityState !== "visible") return;
+      document.removeEventListener("visibilitychange", onChange);
+      resolve();
+    };
+    document.addEventListener("visibilitychange", onChange);
+  });
+
+// Retry transient failures (dropped connection, backgrounded tab, GitHub rejecting simultaneous commits) with a short backoff.
+const withUploadRetry = async <T,>(task: () => Promise<T>): Promise<T> => {
+  for (let attempt = 0; ; attempt++) {
+    await waitUntilVisible();
+    try {
+      return await task();
+    } catch (error) {
+      if (attempt >= UPLOAD_RETRY_DELAYS_MS.length || !isRetryableUploadError(error)) throw error;
+      const jitter = Math.random() * 600;
+      await new Promise((resolve) => setTimeout(resolve, UPLOAD_RETRY_DELAYS_MS[attempt] + jitter));
+    }
+  }
+};
+
+const runWithConcurrency = async (jobs: Array<() => Promise<void>>, limit: number): Promise<void> => {
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, jobs.length) }, async () => {
+      while (next < jobs.length) await jobs[next++]();
+    }),
+  );
+};
+
 const MARKDOWN_TABLE_ROW_PATTERN = /^\s*\|.*\|\s*$/;
 const MARKDOWN_TABLE_DELIMITER_CELL_PATTERN = /^:?-{3,}:?$/;
 const TABLE_CELL_NBSP_PATTERN = /^(?:&nbsp;|\u00A0)+$/i;
@@ -322,7 +365,7 @@ export function Editor({
           void insertLocalImageFile(file, "slash", {
             ...(alt ? { alt } : {}),
             ...(title ? { title } : {}),
-          });
+          })?.run();
         },
         enableImages,
         imageSlashFallback: imageFallback === "prompt-url" ? "prompt-url" : "none",
@@ -640,12 +683,14 @@ export function Editor({
     updatePendingUploads(-1);
   };
 
-  const insertLocalImageFile = async (
+  // Places the placeholder image immediately and returns `run`, which uploads it. Pasting several photos places them all at once
+  // (so the cursor is free right away) and then runs the uploads in parallel.
+  const insertLocalImageFile = (
     file: File,
     source: "paste" | "drop" | "slash",
     initialAttrs?: { alt?: string; title?: string },
     at?: number,
-  ): Promise<number | undefined> => {
+  ): { endPos: number; run: () => Promise<void> } | undefined => {
     if (!file.type.startsWith("image/")) return;
     const uploadId = createUploadId();
     const blobUrl = URL.createObjectURL(file);
@@ -672,10 +717,11 @@ export function Editor({
     (at == null ? insertChain.insertContent(imageNode) : insertChain.insertContentAt(at, imageNode)).run();
     const endPos = editor.state.selection.to;
 
+    const run = async (): Promise<void> => {
     try {
       let resolved: ImageUploadResult | null = null;
       if (onUploadImage) {
-        resolved = await onUploadImage(file, { editor, source });
+        resolved = await withUploadRetry(async () => onUploadImage(file, { editor, source }));
       } else if (imageFallback === "data-url") {
         if (file.size <= maxImageBytes) {
           resolved = { src: await fileToDataUrl(file), alt: fallbackAlt };
@@ -698,7 +744,7 @@ export function Editor({
           file,
         );
         toast.error(title, { description, duration: 12000 });
-        return endPos;
+        return;
       }
 
       const preloaded = await preloadImageSource(resolved.src);
@@ -719,7 +765,7 @@ export function Editor({
           description: "The photo is committed to the repo. Reload the page to see it in the editor.",
           duration: 8000,
         });
-        return endPos;
+        return;
       }
 
       finalizeImageUpload(uploadId, (attrs): UploadableImageAttrs | null => {
@@ -739,7 +785,7 @@ export function Editor({
       });
 
       cleanupUpload(uploadId, { revokeBlob: true });
-      return endPos;
+      return;
     } catch (error) {
       finalizeImageUpload(uploadId, (attrs) => ({
         ...attrs,
@@ -750,14 +796,45 @@ export function Editor({
       console.error(error);
       const { title, description } = describeUploadError(error, file);
       toast.error(title, { description, duration: 12000 });
-      return endPos;
+      return;
     }
+    };
+
+    return { endPos, run };
   };
 
   const insertImagesFromFiles = async (files: File[], source: "paste" | "drop"): Promise<void> => {
+    // 1. place every placeholder now, one after another, so nothing waits on the network
     let at: number | undefined;
+    const jobs: Array<() => Promise<void>> = [];
     for (const file of files) {
-      at = await insertLocalImageFile(file, source, undefined, at);
+      const placed = insertLocalImageFile(file, source, undefined, at);
+      if (!placed) continue;
+      at = placed.endPos;
+      jobs.push(placed.run);
+    }
+    if (!jobs.length) return;
+
+    // park the cursor after the last photo (not on it, where typing would replace it)
+    if (at != null) {
+      const next = Selection.findFrom(editor.state.doc.resolve(at), 1, true);
+      if (next) editor.view.dispatch(editor.state.tr.setSelection(next));
+    }
+
+    // 2. upload in parallel; keep the screen awake and warn before leaving while photos are still going
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    let wakeLock: { release: () => Promise<void> } | null = null;
+    try {
+      wakeLock = (await (navigator as any).wakeLock?.request("screen")) ?? null;
+    } catch {
+      wakeLock = null;
+    }
+    try {
+      await runWithConcurrency(jobs, UPLOAD_CONCURRENCY);
+    } finally {
+      window.removeEventListener("beforeunload", warnBeforeLeaving);
+      void wakeLock?.release().catch(() => {});
     }
   };
 

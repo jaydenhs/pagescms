@@ -62,6 +62,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^3.6.0",
+    "diff": "^8.0.4",
     "drizzle-orm": "^0.45.1",
     "input-otp": "^1.4.2",
     "joplin-turndown-plugin-gfm": "^1.0.12",
